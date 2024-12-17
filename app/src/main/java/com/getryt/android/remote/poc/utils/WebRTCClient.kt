@@ -37,10 +37,6 @@ class WebRTCClient @Inject constructor(
     var listener: Listener? = null
     private lateinit var sessionId: String
     private lateinit var observer: Observer
-//    private val iceServer = listOf(
-//        PeerConnection.IceServer.builder("stun:stun.l.google.com:19302")
-//            .createIceServer()
-//    )
     private val iceServer = listOf(
         PeerConnection.IceServer.builder("stun:stun.relay.metered.ca:80")
             .createIceServer(),
