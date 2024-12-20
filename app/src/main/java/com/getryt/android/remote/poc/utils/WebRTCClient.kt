@@ -152,7 +152,7 @@ class WebRTCClient @Inject constructor(
             val eglBase = EglBase.create()
             surfaceTextureHelper = SurfaceTextureHelper.create("ScreenCaptureThread", eglBase.eglBaseContext)
             if (surfaceTextureHelper == null) {
-                Log.e("ScreenCapture", "Failed to create SurfaceTextureHelper")
+                Log.e(TAG, "Failed to create SurfaceTextureHelper")
                 return@post
             }
             screenCapturer = ScreenCapturerAndroid(
@@ -168,29 +168,51 @@ class WebRTCClient @Inject constructor(
                     }
                 }
             )
+            if (screenCapturer == null) {
+                Log.e(TAG, "Failed to create ScreenCapturerAndroid")
+                return@post
+            }
             val (screenWidthPixels, screenHeightPixels, densityDpi) = getDisplayMetrics()
             val videoSource = peerConnectionFactory.createVideoSource(screenCapturer!!.isScreencast)
+            if (videoSource == null) {
+                Log.e(TAG, "Failed to create video source")
+                return@post
+            }
             Log.d(TAG, "Video source created: $videoSource")
             screenCapturer?.initialize(surfaceTextureHelper, context, object : CapturerObserver {
-                override fun onCapturerStarted(p0: Boolean) {
-                    Log.d(TAG, "Screen capturer started: $p0")
+                override fun onCapturerStarted(success: Boolean) {
+                    Log.d(TAG, "Screen capturer started: $success")
                 }
                 override fun onCapturerStopped() {
                     Log.d(TAG, "Screen capturer stopped.")
                 }
-                override fun onFrameCaptured(p0: VideoFrame?) {
-                    Log.d(TAG, "Frame captured: width=${p0?.buffer?.width}, height=${p0?.buffer?.height}")
+                override fun onFrameCaptured(frame: VideoFrame?) {
+                    frame?.buffer?.let {
+                        Log.d(TAG, "Frame captured: width=${it.width}, height=${it.height}, type=${it.javaClass.simpleName}")
+                    }
                 }
             })
             screenCapturer?.startCapture(screenWidthPixels, screenHeightPixels, 30)
             localVideoTrack = peerConnectionFactory.createVideoTrack("SCREEN_VIDEO_TRACK", videoSource)
+            if (localVideoTrack == null) {
+                Log.e(TAG, "Failed to create local video track")
+                return@post
+            }
             Log.d(TAG, "Local video track created: ${localVideoTrack?.id()}")
             localStream = peerConnectionFactory.createLocalMediaStream("LOCAL_STREAM")
+            if (localStream == null) {
+                Log.e(TAG, "Failed to create local media stream")
+                return@post
+            }
             Log.d(TAG, "Local media stream created: ${localStream?.id}")
             localStream?.addTrack(localVideoTrack)
-            Log.d(TAG, "local track added")
-            peerConnection?.addStream(localStream)
-            Log.d(TAG, "local stream added")
+            Log.d(TAG, "Local track added")
+            if (peerConnection != null) {
+                peerConnection?.addStream(localStream)
+                Log.d(TAG, "Local stream added")
+            } else {
+                Log.e(TAG, "PeerConnection is not initialized")
+            }
             debugPeerConnectionStats()
         }
     }
@@ -213,13 +235,15 @@ class WebRTCClient @Inject constructor(
         Handler(Looper.getMainLooper()).postDelayed(object : Runnable {
             override fun run() {
                 peerConnection?.getStats { report ->
-                    Log.d(TAG, "debugPeerConnectionStats: $report")
                     for (stat in report.statsMap.values) {
                         if (stat.type == "outbound-rtp" && stat.members["kind"] == "video") {
                             val bitrate = stat.members["bytesSent"]?.toString()?.toLongOrNull()
                             val packetsSent = stat.members["packetsSent"]?.toString()?.toLongOrNull()
-                            Log.d("WebRTC Stats", "Video Track Bitrate: $bitrate bytes")
-                            Log.d("WebRTC Stats", "Packets Sent: $packetsSent")
+                            Log.i("WebRTC Stats", "Stat: ${stat.type}, ${stat.members}")
+                            Log.i("WebRTC Stats", "Video Track Bitrate: $bitrate bytes")
+                            Log.i("WebRTC Stats", "Packets Sent: $packetsSent")
+                        } else {
+                            Log.d("WebRTC Stats", "Stat: ${stat.type}, ${stat.members}")
                         }
                     }
                 }
