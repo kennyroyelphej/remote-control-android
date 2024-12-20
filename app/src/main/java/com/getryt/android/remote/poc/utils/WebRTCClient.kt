@@ -11,6 +11,7 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.WindowManager
 import com.getryt.android.remote.poc.model.DataModel
 import com.getryt.android.remote.poc.model.DataModelType
@@ -36,6 +37,7 @@ class WebRTCClient @Inject constructor(
 ) {
     var listener: Listener? = null
     private lateinit var sessionId: String
+    private lateinit var target: String
     private lateinit var observer: Observer
     private val iceServer = listOf(
         PeerConnection.IceServer.builder("stun:stun.relay.metered.ca:80")
@@ -76,9 +78,10 @@ class WebRTCClient @Inject constructor(
 
     fun initializeWebRTCClient(sessionId: String, target: String, observer: Observer) {
         this.sessionId = sessionId
+        this.target = target
         this.observer = observer
         peerConnection = createPeerConnection(observer)
-        sendOffer(target)
+        requestSession()
     }
 
     private fun createPeerConnectionFactory(): PeerConnectionFactory {
@@ -108,32 +111,6 @@ class WebRTCClient @Inject constructor(
         )
     }
 
-    fun setPermissionIntent(intent: Intent, resultCode: Int) {
-        this.permissionIntent = intent
-        this.resultCode = resultCode
-    }
-
-    private fun sendOffer(target: String) {
-        peerConnection?.createOffer(object : RemoteSdpObserver() {
-            override fun onCreateSuccess(desc: SessionDescription?) {
-                peerConnection?.setLocalDescription(this, desc)
-                listener?.onTransferEventToSocket(
-                    DataModel(
-                        type = DataModelType.Offer,
-                        sessionId = sessionId,
-                        target = target,
-                        data = desc?.description
-                    )
-                )
-            }
-        }, mediaConstraint)
-    }
-
-    fun addRemoteAnswer(sessionDescription: SessionDescription) {
-        peerConnection?.setRemoteDescription(RemoteSdpObserver(), sessionDescription)
-        startScreenCapturing()
-    }
-
     fun addIceCandidate(iceCandidate: IceCandidate) {
         peerConnection?.addIceCandidate(iceCandidate)
     }
@@ -149,15 +126,60 @@ class WebRTCClient @Inject constructor(
         )
     }
 
-    private fun startScreenCapturing() {
+    fun setPermissionIntent(intent: Intent, resultCode: Int) {
+        this.permissionIntent = intent
+        this.resultCode = resultCode
+    }
+
+    private fun requestSession() {
+        listener?.onTransferEventToSocket(
+            DataModel(
+                type = DataModelType.RequestSession,
+                sessionId = sessionId,
+                target = target
+            )
+        )
+    }
+
+    fun handleOffer(data: DataModel) {
+        Log.d(TAG, "handleOffer: REMOTE_DESC")
+        Log.d(TAG, "handleOffer: ${data.data}")
+        peerConnection?.setRemoteDescription(RemoteSdpObserver(), SessionDescription(
+            SessionDescription.Type.OFFER,
+            data.data.toString()
+        ))
+        peerConnection?.createAnswer(object : RemoteSdpObserver() {
+            override fun onCreateSuccess(desc: SessionDescription?) {
+                peerConnection?.setLocalDescription(this, desc)
+                listener?.onTransferEventToSocket(
+                    DataModel(
+                        type = DataModelType.Answer,
+                        sessionId = sessionId,
+                        target = target,
+                        data = desc?.description
+                    )
+                )
+            }
+            override fun onCreateFailure(p0: String?) {
+                Log.e(TAG, "SDP creation failed: $p0")
+            }
+            override fun onSetFailure(p0: String?) {
+                Log.e(TAG, "Failed to set SDP: $p0")
+            }
+        }, mediaConstraint)
+    }
+
+    fun startScreenCapturing() {
         mediaProjectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = mediaProjectionManager.getMediaProjection(resultCode!!, permissionIntent!!)
         mediaProjection?.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
                 super.onStop()
+                Log.d(TAG, "onStop: Clear session")
             }
         }, null)
         val (screenWidthPixels, screenHeightPixels, densityDpi) = getDisplayMetrics()
+        sendDisplayMetrics(screenWidthPixels, screenHeightPixels, densityDpi)
         val imageReader = getImageReader(screenWidthPixels, screenHeightPixels)
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "ScreenCapture",
@@ -224,12 +246,27 @@ class WebRTCClient @Inject constructor(
         System.arraycopy(i420U, 0, i420Buffer.dataU, 0, i420U.size)
         System.arraycopy(i420V, 0, i420Buffer.dataV, 0, i420V.size)
         val videoFrame = VideoFrame(i420Buffer, 0, System.nanoTime())
-
         localVideoTrack?.let { track ->
             track.addSink { videoFrame }
         }
         i420Buffer.release()
         image.close()
+    }
+
+    private fun sendDisplayMetrics(width: Int, height: Int, density: Int) {
+        val displayMetrics = HashMap<String, Any>()
+        displayMetrics["desc"] = "DISPLAY_METRICS"
+        displayMetrics["width"] = width
+        displayMetrics["height"] = height
+        displayMetrics["density"] = density
+        listener?.onTransferEventToSocket(
+            DataModel(
+                type = DataModelType.SessionMeta,
+                sessionId = sessionId,
+                target = target,
+                data = displayMetrics
+            )
+        )
     }
 
     interface Listener {

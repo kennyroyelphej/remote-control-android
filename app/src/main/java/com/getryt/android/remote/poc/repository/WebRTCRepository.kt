@@ -1,6 +1,8 @@
 package com.getryt.android.remote.poc.repository
 
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.getryt.android.remote.poc.model.DataModel
 import com.getryt.android.remote.poc.model.DataModelType
@@ -11,7 +13,6 @@ import com.getryt.android.remote.poc.utils.WebRTCClient
 import com.google.gson.Gson
 import org.webrtc.IceCandidate
 import org.webrtc.MediaStream
-import org.webrtc.SessionDescription
 import javax.inject.Inject
 
 class WebRTCRepository @Inject constructor(
@@ -31,8 +32,9 @@ class WebRTCRepository @Inject constructor(
         socketClient.initializeSocketClient(sessionId)
         webRTCClient.initializeWebRTCClient(sessionId, target, object : RemotePeerObserver() {
             override fun onIceCandidate(p0: IceCandidate?) {
+                Log.d(TAG, "onIceCandidate: $p0")
                 p0?.let {
-                    webRTCClient.sendIceCandidate(p0, this@WebRTCRepository.target)
+                    webRTCClient.sendIceCandidate(p0, target)
                 }
             }
         })
@@ -46,13 +48,11 @@ class WebRTCRepository @Inject constructor(
         Log.d(TAG, "onNewMessageReceived: $data")
         when (data.type) {
             DataModelType.SignIn -> {}
-            DataModelType.Offer -> {}
-            DataModelType.Answer -> {
-                webRTCClient.addRemoteAnswer(SessionDescription(
-                    SessionDescription.Type.ANSWER,
-                    data.data.toString()
-                ))
+            DataModelType.RequestSession -> {}
+            DataModelType.Offer -> {
+                webRTCClient.handleOffer(data)
             }
+            DataModelType.Answer -> {}
             DataModelType.IceCandidates -> {
                 val parsedCandidate = try {
                     gson.fromJson(data.data.toString(), RTCIceCandidateInit::class.java)
@@ -68,8 +68,13 @@ class WebRTCRepository @Inject constructor(
                     ))
                 }
             }
-            DataModelType.StartStreaming -> {}
-            DataModelType.EndCall -> {}
+            DataModelType.StartSession -> {
+                Handler(Looper.getMainLooper()).post {
+                    webRTCClient.startScreenCapturing()
+                }
+            }
+            DataModelType.SessionMeta -> {}
+            DataModelType.EndSession -> {}
             null -> {
                 Log.e(TAG, "onNewMessageReceived: INVALID TYPE ERROR")
             }

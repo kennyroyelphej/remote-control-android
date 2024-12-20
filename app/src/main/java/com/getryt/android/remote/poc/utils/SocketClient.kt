@@ -22,7 +22,7 @@ class SocketClient @Inject constructor(
 
     fun initializeSocketClient(sessionId: String) {
         this.sessionId = sessionId
-        webSocket = object : WebSocketClient(URI("ws://192.168.1.12:3000")) {
+        webSocket = object : WebSocketClient(URI("ws://192.168.1.14:3000")) {
             override fun onOpen(handshakedata: ServerHandshake?) {
                 sendMessage(
                     DataModel(
@@ -32,7 +32,6 @@ class SocketClient @Inject constructor(
                     )
                 )
             }
-
             override fun onMessage(message: String?) {
                 val model = try {
                     gson.fromJson(message.toString(), DataModel::class.java)
@@ -41,21 +40,18 @@ class SocketClient @Inject constructor(
                 }
                 model?.let { data -> listener?.onNewMessageReceived(data) }
             }
-
             override fun onClose(code: Int, reason: String?, remote: Boolean) {
                 CoroutineScope(Dispatchers.IO).launch {
                     delay(5000)
                     initializeSocketClient(sessionId)
                 }
             }
-
             override fun onError(ex: Exception?) {
                 ex?.printStackTrace()
             }
         }
         webSocket?.connect()
     }
-
     fun sendMessage(message: Any?) {
         try {
             webSocket?.send(gson.toJson(message))
@@ -63,11 +59,9 @@ class SocketClient @Inject constructor(
             ex.printStackTrace()
         }
     }
-
     interface Listener {
         fun onNewMessageReceived(data: DataModel)
     }
-
     companion object {
         private var webSocket: WebSocketClient? = null
     }

@@ -2,11 +2,13 @@ package com.getryt.android.remote.poc.model
 
 enum class DataModelType {
     SignIn,
-    StartStreaming,
-    EndCall,
+    RequestSession,
     Offer,
     Answer,
-    IceCandidates
+    IceCandidates,
+    StartSession,
+    SessionMeta,
+    EndSession
 }
 
 data class DataModel(
