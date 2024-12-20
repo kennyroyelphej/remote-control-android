@@ -2,30 +2,29 @@ package com.getryt.android.remote.poc.utils
 
 import android.content.Context
 import android.content.Intent
-import android.graphics.PixelFormat
-import android.hardware.display.DisplayManager
-import android.hardware.display.VirtualDisplay
-import android.media.Image
-import android.media.ImageReader
 import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.WindowManager
 import com.getryt.android.remote.poc.model.DataModel
 import com.getryt.android.remote.poc.model.DataModelType
 import com.google.gson.Gson
+import org.webrtc.CapturerObserver
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
 import org.webrtc.IceCandidate
-import org.webrtc.JavaI420Buffer
 import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnection.Observer
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.SessionDescription
+import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoFrame
 import org.webrtc.VideoTrack
 import javax.inject.Inject
@@ -65,9 +64,8 @@ class WebRTCClient @Inject constructor(
     private val mediaConstraint = MediaConstraints().apply {
         mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
     }
-    private lateinit var mediaProjectionManager: MediaProjectionManager
-    private var mediaProjection: MediaProjection? = null
-    private var virtualDisplay: VirtualDisplay? = null
+    private var screenCapturer: ScreenCapturerAndroid? = null
+    private var surfaceTextureHelper: SurfaceTextureHelper? = null
 
     private var localVideoTrack: VideoTrack? = null
     private var localStream: MediaStream? = null
@@ -150,37 +148,51 @@ class WebRTCClient @Inject constructor(
     }
 
     private fun startScreenCapturing() {
-        mediaProjectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = mediaProjectionManager.getMediaProjection(resultCode!!, permissionIntent!!)
-        mediaProjection?.registerCallback(object : MediaProjection.Callback() {
-            override fun onStop() {
-                super.onStop()
+        Handler(Looper.getMainLooper()).post {
+            val eglBase = EglBase.create()
+            surfaceTextureHelper = SurfaceTextureHelper.create("ScreenCaptureThread", eglBase.eglBaseContext)
+            if (surfaceTextureHelper == null) {
+                Log.e("ScreenCapture", "Failed to create SurfaceTextureHelper")
+                return@post
             }
-        }, null)
-        val (screenWidthPixels, screenHeightPixels, densityDpi) = getDisplayMetrics()
-        val imageReader = getImageReader(screenWidthPixels, screenHeightPixels)
-        virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "ScreenCapture",
-            screenWidthPixels,
-            screenHeightPixels,
-            densityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader.surface,
-            null,
-            null
-        )
-        imageReader.setOnImageAvailableListener({ reader ->
-            val image = reader.acquireLatestImage()
-            image?.let { data ->
-                sendImageToWebRTC(data)
-                data.close()
-            }
-        }, null)
-        val videoSource = peerConnectionFactory.createVideoSource(false)
-        localVideoTrack = peerConnectionFactory.createVideoTrack("local_video", videoSource)
-        localStream = peerConnectionFactory.createLocalMediaStream("local_stream")
-        localStream?.addTrack(localVideoTrack)
-        peerConnection?.addTrack(localVideoTrack, listOf(localStream?.id ?: "stream"))
+            screenCapturer = ScreenCapturerAndroid(
+                permissionIntent,
+                object : MediaProjection.Callback() {
+                    override fun onStop() {
+                        Log.d(TAG, "MediaProjection stopped")
+                        screenCapturer?.stopCapture()
+                        surfaceTextureHelper?.stopListening()
+                        surfaceTextureHelper?.dispose()
+                        surfaceTextureHelper = null
+                        screenCapturer = null
+                    }
+                }
+            )
+            val (screenWidthPixels, screenHeightPixels, densityDpi) = getDisplayMetrics()
+            val videoSource = peerConnectionFactory.createVideoSource(screenCapturer!!.isScreencast)
+            Log.d(TAG, "Video source created: $videoSource")
+            screenCapturer?.initialize(surfaceTextureHelper, context, object : CapturerObserver {
+                override fun onCapturerStarted(p0: Boolean) {
+                    Log.d(TAG, "Screen capturer started: $p0")
+                }
+                override fun onCapturerStopped() {
+                    Log.d(TAG, "Screen capturer stopped.")
+                }
+                override fun onFrameCaptured(p0: VideoFrame?) {
+                    Log.d(TAG, "Frame captured: width=${p0?.buffer?.width}, height=${p0?.buffer?.height}")
+                }
+            })
+            screenCapturer?.startCapture(screenWidthPixels, screenHeightPixels, 30)
+            localVideoTrack = peerConnectionFactory.createVideoTrack("SCREEN_VIDEO_TRACK", videoSource)
+            Log.d(TAG, "Local video track created: ${localVideoTrack?.id()}")
+            localStream = peerConnectionFactory.createLocalMediaStream("LOCAL_STREAM")
+            Log.d(TAG, "Local media stream created: ${localStream?.id}")
+            localStream?.addTrack(localVideoTrack)
+            Log.d(TAG, "local track added")
+            peerConnection?.addStream(localStream)
+            Log.d(TAG, "local stream added")
+            debugPeerConnectionStats()
+        }
     }
 
     private fun getDisplayMetrics(): Triple<Int, Int, Int> {
@@ -197,39 +209,23 @@ class WebRTCClient @Inject constructor(
         }
     }
 
-    private fun getImageReader(screenWidthPixels: Int, screenHeightPixels: Int): ImageReader {
-        return ImageReader.newInstance(
-            screenWidthPixels,
-            screenHeightPixels,
-            PixelFormat.RGBA_8888,
-            2
-        )
-    }
-
-    private fun sendImageToWebRTC(image: Image) {
-        val planes = image.planes
-        val yPlane = planes[0].buffer
-        val uPlane = planes[1].buffer
-        val vPlane = planes[2].buffer
-        val width = image.width
-        val height = image.height
-        val i420Y = ByteArray(yPlane.remaining())
-        val i420U = ByteArray(uPlane.remaining())
-        val i420V = ByteArray(vPlane.remaining())
-        yPlane.get(i420Y)
-        uPlane.get(i420U)
-        vPlane.get(i420V)
-        val i420Buffer = JavaI420Buffer.allocate(width, height)
-        System.arraycopy(i420Y, 0, i420Buffer.dataY, 0, i420Y.size)
-        System.arraycopy(i420U, 0, i420Buffer.dataU, 0, i420U.size)
-        System.arraycopy(i420V, 0, i420Buffer.dataV, 0, i420V.size)
-        val videoFrame = VideoFrame(i420Buffer, 0, System.nanoTime())
-
-        localVideoTrack?.let { track ->
-            track.addSink { videoFrame }
-        }
-        i420Buffer.release()
-        image.close()
+    private fun debugPeerConnectionStats() {
+        Handler(Looper.getMainLooper()).postDelayed(object : Runnable {
+            override fun run() {
+                peerConnection?.getStats { report ->
+                    Log.d(TAG, "debugPeerConnectionStats: $report")
+                    for (stat in report.statsMap.values) {
+                        if (stat.type == "outbound-rtp" && stat.members["kind"] == "video") {
+                            val bitrate = stat.members["bytesSent"]?.toString()?.toLongOrNull()
+                            val packetsSent = stat.members["packetsSent"]?.toString()?.toLongOrNull()
+                            Log.d("WebRTC Stats", "Video Track Bitrate: $bitrate bytes")
+                            Log.d("WebRTC Stats", "Packets Sent: $packetsSent")
+                        }
+                    }
+                }
+                Handler(Looper.getMainLooper()).postDelayed(this, 5000)
+            }
+        }, 5000)
     }
 
     interface Listener {

@@ -11,6 +11,7 @@ import com.getryt.android.remote.poc.utils.WebRTCClient
 import com.google.gson.Gson
 import org.webrtc.IceCandidate
 import org.webrtc.MediaStream
+import org.webrtc.PeerConnection
 import org.webrtc.SessionDescription
 import javax.inject.Inject
 
@@ -34,6 +35,9 @@ class WebRTCRepository @Inject constructor(
                 p0?.let {
                     webRTCClient.sendIceCandidate(p0, this@WebRTCRepository.target)
                 }
+            }
+            override fun onIceConnectionChange(p0: PeerConnection.IceConnectionState?) {
+                Log.d(TAG, "onIceConnectionChange: $p0")
             }
         })
     }
