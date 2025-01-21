@@ -22,7 +22,6 @@ import dagger.hilt.android.AndroidEntryPoint
 import org.webrtc.MediaStream
 import javax.inject.Inject
 
-
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity(), WebRTCRepository.Listener {
     @Inject lateinit var remoteHostRepository: RemoteHostRepository

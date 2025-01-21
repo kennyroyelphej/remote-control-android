@@ -22,7 +22,7 @@ class SocketClient @Inject constructor(
 
     fun initializeSocketClient(sessionId: String) {
         this.sessionId = sessionId
-        webSocket = object : WebSocketClient(URI("ws://192.168.1.14:3000")) {
+        webSocket = object : WebSocketClient(URI("ws://192.168.1.3:3000")) {
             override fun onOpen(handshakedata: ServerHandshake?) {
                 sendMessage(
                     DataModel(

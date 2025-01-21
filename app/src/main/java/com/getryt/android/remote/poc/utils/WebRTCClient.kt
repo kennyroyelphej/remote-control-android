@@ -37,6 +37,8 @@ class WebRTCClient @Inject constructor(
     private lateinit var sessionId: String
     private lateinit var observer: Observer
     private val iceServer = listOf(
+//        PeerConnection.IceServer.builder("stun:stun.l.google.com:19302")
+//            .createIceServer(),
         PeerConnection.IceServer.builder("stun:stun.relay.metered.ca:80")
             .createIceServer(),
         PeerConnection.IceServer.builder("turn:global.relay.metered.ca:80")
@@ -112,31 +114,41 @@ class WebRTCClient @Inject constructor(
     }
 
     private fun sendOffer(target: String) {
-        peerConnection?.createOffer(object : RemoteSdpObserver() {
-            override fun onCreateSuccess(desc: SessionDescription?) {
-                peerConnection?.setLocalDescription(this, desc)
-                listener?.onTransferEventToSocket(
-                    DataModel(
-                        type = DataModelType.Offer,
-                        sessionId = sessionId,
-                        target = target,
-                        data = desc?.description
+        if (peerConnection != null) {
+            peerConnection?.createOffer(object : RemoteSdpObserver() {
+                override fun onCreateSuccess(desc: SessionDescription?) {
+                    peerConnection?.setLocalDescription(this, desc)
+                    listener?.onTransferEventToSocket(
+                        DataModel(
+                            type = DataModelType.Offer,
+                            sessionId = sessionId,
+                            target = target,
+                            data = desc?.description
+                        )
                     )
-                )
-            }
-        }, mediaConstraint)
+                }
+                override fun onCreateFailure(p0: String?) {
+                    Log.e(TAG, "Offer creation failed: $p0")
+                }
+            }, mediaConstraint)
+        } else {
+            Log.e(TAG, "PeerConnection is not initialized.")
+        }
     }
 
     fun addRemoteAnswer(sessionDescription: SessionDescription) {
+        Log.d(TAG, "Received remote answer: ${sessionDescription.description}")
         peerConnection?.setRemoteDescription(RemoteSdpObserver(), sessionDescription)
         startScreenCapturing()
     }
 
     fun addIceCandidate(iceCandidate: IceCandidate) {
+        Log.d(TAG, "Remote ICECanditates: $iceCandidate")
         peerConnection?.addIceCandidate(iceCandidate)
     }
 
-    fun sendIceCandidate(candidate: IceCandidate, target: String){
+    fun sendIceCandidate(candidate: IceCandidate, target: String) {
+        Log.d(TAG, "Local ICECanditates: $candidate")
         listener?.onTransferEventToSocket(
             DataModel(
                 type = DataModelType.IceCandidates,
@@ -168,10 +180,6 @@ class WebRTCClient @Inject constructor(
                     }
                 }
             )
-            if (screenCapturer == null) {
-                Log.e(TAG, "Failed to create ScreenCapturerAndroid")
-                return@post
-            }
             val (screenWidthPixels, screenHeightPixels, densityDpi) = getDisplayMetrics()
             val videoSource = peerConnectionFactory.createVideoSource(screenCapturer!!.isScreencast)
             if (videoSource == null) {
@@ -232,24 +240,22 @@ class WebRTCClient @Inject constructor(
     }
 
     private fun debugPeerConnectionStats() {
-        Handler(Looper.getMainLooper()).postDelayed(object : Runnable {
-            override fun run() {
-                peerConnection?.getStats { report ->
-                    for (stat in report.statsMap.values) {
-                        if (stat.type == "outbound-rtp" && stat.members["kind"] == "video") {
-                            val bitrate = stat.members["bytesSent"]?.toString()?.toLongOrNull()
-                            val packetsSent = stat.members["packetsSent"]?.toString()?.toLongOrNull()
-                            Log.i("WebRTC Stats", "Stat: ${stat.type}, ${stat.members}")
-                            Log.i("WebRTC Stats", "Video Track Bitrate: $bitrate bytes")
-                            Log.i("WebRTC Stats", "Packets Sent: $packetsSent")
-                        } else {
-                            Log.d("WebRTC Stats", "Stat: ${stat.type}, ${stat.members}")
-                        }
+        Handler(Looper.getMainLooper()).postDelayed({
+            peerConnection?.getStats { report ->
+                for (stat in report.statsMap.values) {
+                    if (stat.type == "outbound-rtp" && stat.members["kind"] == "video") {
+                        val bitrate = stat.members["bytesSent"]?.toString()?.toLongOrNull()
+                        val packetsSent = stat.members["packetsSent"]?.toString()?.toLongOrNull()
+                        Log.i("WebRTC Stats", "Stat: ${stat.type}, ${stat.members}")
+                        Log.i("WebRTC Stats", "Video Track Bitrate: $bitrate bytes")
+                        Log.i("WebRTC Stats", "Packets Sent: $packetsSent")
+                    } else {
+                        Log.d("WebRTC Stats", "Stat: ${stat.type}, ${stat.members}")
                     }
                 }
-                Handler(Looper.getMainLooper()).postDelayed(this, 5000)
             }
-        }, 5000)
+            //                Handler(Looper.getMainLooper()).postDelayed(this, 5000)
+        }, 10000)
     }
 
     interface Listener {
